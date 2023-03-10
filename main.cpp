@@ -426,7 +426,7 @@ int main() {
   Board board = api.init();
   auto time = chrono::high_resolution_clock::now();
   auto dur = time - chrono::high_resolution_clock::now();
-  freopen(("out" + to_string(api.myID)).c_str(), "w", stderr);
+  // freopen(("out" + to_string(api.myID)).c_str(), "w", stderr);
   while (true) {
     api.readTick(board);
     vector<pair<bool, vector<Vec2>>> paths(api.number_of_players);
