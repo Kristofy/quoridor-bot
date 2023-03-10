@@ -56,6 +56,7 @@ public:
 
   class PathFinder {
   public:
+    friend Board;
     explicit PathFinder(const Board &board) : board(board), visited(board.width * board.height, false) {}
 
     auto canReach(const Vec2 &start, const Sides &side) const -> bool {
@@ -190,20 +191,18 @@ public:
         swap(y, y2);
       }
 
+      // if the stepping is vertical, then check the horizontal walls
       const bool isVertical = y2 - y == 1 && x == x2;
       const bool isHorizontal = x2 - x == 1 && y == y2;
 
       assert(isVertical ^ isHorizontal);
 
-      int const U = (isVertical ? x : x2);
-      int const V = (isVertical ? y2 : y);
+      if(isVertical){
+        return board.wallsHorizontalGrid[y][x].player != NoPlayer;
+      } else {
+        return board.wallsVerticalGrid[y][x].player != NoPlayer;
+      }
 
-      const bool isWall0 = board.wallsGrid[V][U - 0].isVertical && board.wallsGrid[V][U - 0].player != 0;
-      const bool isWall1 = (isVertical ? x > 1 : y > 1) &&
-                           board.wallsGrid[V - isHorizontal][U - isVertical].isVertical &&
-                           board.wallsGrid[V - isHorizontal][U - isVertical].player != 0;
-
-      return isWall0 || isWall1;
     }
 
   private:
@@ -249,10 +248,26 @@ public:
   };
 
   Board(int width, int height)
-      : width(width), height(height), wallsGrid(height, vector<Wall>(width, {0, false})),
-        playersGrid(height, vector<PlayerId>(width, NoPlayer)), pathFinder(*this) {}
+      : width(width), height(height), wallsVerticalGrid(height, vector<Wall>(width, {0, false}))
+       ,wallsHorizontalGrid(height, vector<Wall>(width, {0, false})), playersGrid(height, vector<PlayerId>(width, NoPlayer)), pathFinder(*this) {}
 
-  void setWall(Vec2 pos, bool isVertical, PlayerId player) { wallsGrid[pos.y][pos.x].isVertical = isVertical; }
+  void setWall(Vec2 pos, bool isVertical, PlayerId player) {
+    if(isVertical){
+      wallsVerticalGrid[pos.y][pos.x].player = player;
+      wallsVerticalGrid[pos.y][pos.x].isVertical = isVertical;
+
+      if(pos.y + 1 >= height) return;
+      wallsVerticalGrid[pos.y+1][pos.x].player = player;
+      wallsVerticalGrid[pos.y+1][pos.x].isVertical = isVertical;
+    } else {
+      wallsHorizontalGrid[pos.y][pos.x].player = player;
+      wallsHorizontalGrid[pos.y][pos.x].isVertical = isVertical;
+
+      if(pos.x + 1 >= width) return;
+      wallsHorizontalGrid[pos.y][pos.x+1].player = player;
+      wallsHorizontalGrid[pos.y][pos.x+1].isVertical = isVertical;
+    }
+  }
 
   void removePlayers() {
     for (auto &p : players) {
@@ -274,21 +289,39 @@ public:
   }
 
   auto isValidWall(int x, int y, Wall wall) -> bool {
-    if (wallsGrid[y][x].player != NoPlayer) {
-      return false;
+    if(wall.isVertical){
+      if(wallsVerticalGrid[y][x].player != NoPlayer || (y + 1 >= height || wallsVerticalGrid[y+1][x].player != NoPlayer)){
+          return false;
+      }
+    } else {
+      if(wallsHorizontalGrid[y][x].player != NoPlayer || (x + 1 >= width || wallsHorizontalGrid[y][x+1].player != NoPlayer)){
+          return false;
+      }
+    } 
+    
+    if(wall.isVertical){
+      wallsVerticalGrid[y][x] = wall;
+    } else {
+      wallsHorizontalGrid[y][x] = wall;
     }
-    wallsGrid[y][x] = wall;
 
     const bool isValid = all_of(players.begin(), players.end(), [&](const Player &player) {
       return pathFinder.canReach(player.position, player.goal);
     });
 
-    wallsGrid[y][x] = {false, NoPlayer};
+    if(wall.isVertical){
+      wallsVerticalGrid[y][x] = {false, NoPlayer};;
+    } else {
+      wallsHorizontalGrid[y][x] = {false, NoPlayer};;
+    }
+    
     return isValid;
   }
 
 private:
-  vector<vector<Wall>> wallsGrid;
+  vector<vector<Wall>> wallsVerticalGrid;
+  vector<vector<Wall>> wallsHorizontalGrid;
+
   vector<vector<PlayerId>> playersGrid;
   vector<Player> players;
 
@@ -326,39 +359,38 @@ struct GameApi {
   }
 
   Board init() {
-    int width = 9;
-    int height = 9;
+    int width;
+    int height;
+    cin >> number_of_players >> myID >> width >> height;
     Board board(width, height);
-    cin >> number_of_players >> myID;
     players.resize(number_of_players);
     number_of_walls = 20 / number_of_players;
+    for(int i = 0; i < number_of_players; i++){
+      players[i].id = i+1;
+    }
+
+     for (int i = 0, dummy; i < number_of_players; i++) {
+      cin >> players[i].position.x >> players[i].position.y >> dummy;
+      board.addPlayer(players[i]);
+    }
+
+    
+    players[1].goal = Board::Sides::Side::Bottom;
+    players[0].goal = Board::Sides::Side::Top;
+    auto d = board.pathFinder.getScoreFactory(players[myID].goal);
+
     return board;
   }
 
   void readTick(Board &board) {
+
     board.removePlayers();
     cin >> current_tick;
-    cerr << "Tick: " << current_tick << endl;
 
-    for (int i = 0; i < number_of_players; i++) {
-      int id = players[i].id;
-      cin >> players[i].position.x >> players[i].position.y >> players[i].id;
-      players[i].id++;
+    for (int i = 0, dummy; i < number_of_players; i++) {
+      cin >> players[i].position.x >> players[i].position.y >> dummy;
       board.addPlayer(players[i]);
     }
-
-    cerr << "Read players" << endl;
-
-
-    if (current_tick <= number_of_players) {
-        players[1].goal = Board::Sides::Side::Bottom;
-        players[0].goal = Board::Sides::Side::Top;
-        cerr << "Set goals" << endl;
-        auto d = board.pathFinder.getScoreFactory(players[myID].goal);
-        cerr << "dist : " << 9 - d(players[myID].position) << endl;
-
-    }
-
 
     int walls;
     cin >> walls;
@@ -366,22 +398,17 @@ struct GameApi {
     Board::Wall wall;
     for (int i = 0; i < walls; i++) {
       Vec2 pos;
-      cin >> pos.x >> pos.y >> wall.player;
+      cin >> pos.x >> pos.y >> wall.isVertical >> wall.player;
       board.setWall(pos, wall.isVertical, wall.player + 1);
     }
-    cerr << "Read walls" << endl;
 
   }
 
   void step(Board &board, Vec2 pos) {
-    cerr << "[" << myID << "] "
-         << "move: " << pos.x << " " << pos.y << endl;
     cout << pos.x << " " << pos.y << endl;
   }
 
   void placeWall(Board &board, Vec2 pos, bool isVertical) {
-    cerr << "[" << myID << "] "
-         << "wall: " << pos.x << " " << pos.y << " " << isVertical << endl;
     cout << pos.x << " " << pos.y << " " << isVertical << endl;
     number_of_walls--;
   }
@@ -394,21 +421,20 @@ struct GameApi {
 };
 
 int main() {
+
   GameApi api;
   Board board = api.init();
-
+  auto time = chrono::high_resolution_clock::now();
+  auto dur = time - chrono::high_resolution_clock::now();
+  freopen(("out" + to_string(api.myID)).c_str(), "w", stderr);
   while (true) {
     api.readTick(board);
-
     vector<pair<bool, vector<Vec2>>> paths(api.number_of_players);
-    cerr << "in tick: " << api.current_tick << " the paths lenght are: ";
     for (int i = 0; i < api.number_of_players; i++) {
       paths[i] = board.pathFinder.getPath(api.players[i].position, api.players[i].goal);
-      cerr << paths[i].second.size() << " ";
+      cerr << "[" << api.current_tick << "]" << paths[i].second.size() << " " ;
     }
     cerr << endl;
-
-    cerr << "get paths" << endl;
     bool canIReach = paths[api.myID].first;
     int myPath = paths[api.myID].second.size();
 
@@ -419,17 +445,11 @@ int main() {
       }
     }
 
-    cerr << "Found  mins, " << paths[mini].second.size() << endl;
-
-    if(canIReach) {
-        cerr << "I can reach the goal in " << myPath << endl;
-    }else{
-        cerr << "I can't reach to goal" << endl;
-    }
-
-    if (paths[mini].second.size() > myPath) {
+    if (paths[mini].second.size() >= myPath || api.number_of_walls == 0) {
+        cerr << "I'm setting" << endl;
         api.step(board, paths[api.myID].second.front());
     } else {
+        cerr << "I'll try to place a wall setting" << endl;
         Vec2 a = paths[mini].second.front();
         if(board.isValidWall(a.x, a.y, Board::Wall{false, api.myID})) {
             api.placeWall(board, a, false);
@@ -439,16 +459,8 @@ int main() {
             api.step(board, paths[api.myID].second.front());
         }
     }
-    cerr << "Answered  mins" << endl;
 
   }
 
   return 0;
 }
-
-// Az első üzenetnek tartalmazhatná a kedzdő poziciót
-// result += `${state.tick.pawnPos[i].x} ${state.tick.pawnPos[i].y} ${state.tick.ownedWalls[i]}\n`;
-// to
-// result += `${state.tick.pawnPos[i].x} ${state.tick.pawnPos[i].y} ${i}\n`;
-// a sorrend nem az ami a dokumentációban van
-// illegális lépéseket is meglép
